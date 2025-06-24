@@ -1,0 +1,19 @@
+[project]
+name = "pyir"
+version = "0.1.0"
+description = "Ergonomic LLVM IR, JIT, and numerical kernel system for Python (with NumPy, AD, CUDA, and fusion)"
+authors = [
+    { name = "PyIR Authors", email = "your@email.com" }
+]
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "llvmlite>=0.39",
+    "numpy>=1.20",
+    "numba>=0.55"
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta" 
