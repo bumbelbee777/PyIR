@@ -2,83 +2,46 @@ import re
 
 from ..core.ir import IRFunction, IRBlock, IRInstr
 
-def _parse_ir_to_objects(ir_str, ssa_uid, func_name=None):
-    """
-    Parse IR string into IR objects with SSA renaming.
-    Returns (IRFunction, output_vars, output_names).
-    If func_name is given, extract that function; otherwise, use the first.
-    Uses a brace-counting parser for robustness.
-    """
-    import re
-    # Find all function definitions using brace counting
-    lines = ir_str.splitlines()
-    functions = []
-    in_func = False
-    func_lines = []
-    brace_count = 0
-    func_header = None
-    for line in lines:
-        if not in_func and line.strip().startswith('define'):
-            in_func = True
-            func_lines = [line]
-            brace_count = line.count('{') - line.count('}')
-            func_header = line
-        elif in_func:
-            func_lines.append(line)
-            brace_count += line.count('{') - line.count('}')
-            if brace_count == 0:
-                # End of function
-                func_block = '\n'.join(func_lines)
-                # Extract function name
-                m = re.match(r'define\s+[^@]+@([^\(]+)\(', func_header.strip())
-                name = m.group(1).strip() if m else None
-                functions.append((name, func_block))
-                in_func = False
-                func_lines = []
-                func_header = None
-    if not functions:
-        raise ValueError(f"[pyir.fusion] Could not parse function definition from IR")
-    # Pick the function by name if possible
-    if func_name:
-        for n, block in functions:
-            if n == func_name:
-                func_ir = block
-                break
-        else:
-            func_ir = functions[0][1]
+def _parse_ir_to_objects(ir_str, ssa_uid):
+    """Parse IR string to IR objects, handling both strings and IRFunction objects."""
+    if hasattr(ir_str, 'blocks'):  # It's already an IRFunction object
+        ir_fn = ir_str
+        # Extract output variables from the return instruction
+        output_vars = []
+        output_names = []
+        for block in ir_fn.blocks:
+            for instr in block.instrs:
+                if str(instr).startswith('ret '):
+                    ret_instr = str(instr)
+                    # Extract the return variable
+                    if 'ret void' not in ret_instr:
+                        # Find the variable being returned
+                        import re
+                        match = re.search(r'ret [^{}]+ %([a-zA-Z_][a-zA-Z0-9_]*)', ret_instr)
+                        if match:
+                            output_vars.append(match.group(1))
+                            output_names.append('result')
+        return ir_fn, output_vars, output_names
     else:
-        func_ir = functions[0][1]
-    # Now parse the function signature and body as before
-    sig_match = re.search(r'define\s+([^{@]+)@([^\(]+)\(([^\)]*)\)[^{]*\{', func_ir)
-    if not sig_match:
-        print(f"[pyir.fusion] Could not parse function signature from IR block:\n{func_ir}")
-        raise ValueError(f"[pyir.fusion] Could not parse function signature from IR")
-    ret_type = sig_match.group(1).strip()
-    name = sig_match.group(2).strip()
-    args_str = sig_match.group(3).strip()
-    # Parse arguments
-    args = []
-    if args_str:
-        for arg in args_str.split(','):
-            arg = arg.strip()
-            if arg:
-                parts = arg.split('%')
-                if len(parts) == 2:
-                    arg_type = parts[0].strip()
-                    arg_name = parts[1].strip()
-                    args.append((arg_name, arg_type))
-    # Parse body
-    body_match = re.search(r'\{([\s\S]*?)\}$', func_ir, re.MULTILINE)
-    body = body_match.group(1) if body_match else ''
-    # Build IRFunction and return
-    ir_fn = IRFunction(name, args, ret_type)
-    block = IRBlock('entry')
-    for line in body.splitlines():
-        line = line.strip()
-        if line:
-            block.add(IRInstr(line))
-    ir_fn.add_block(block)
-    return ir_fn, [], []
+        # It's a string, parse it
+        from ..core.ir import create_ir_function_from_string
+        ir_fn = create_ir_function_from_string(ir_str)
+        # Extract output variables from the return instruction
+        output_vars = []
+        output_names = []
+        for block in ir_fn.blocks:
+            for instr in block.instrs:
+                if str(instr).startswith('ret '):
+                    ret_instr = str(instr)
+                    # Extract the return variable
+                    if 'ret void' not in ret_instr:
+                        # Find the variable being returned
+                        import re
+                        match = re.search(r'ret [^{}]+ %([a-zA-Z_][a-zA-Z0-9_]*)', ret_instr)
+                        if match:
+                            output_vars.append(match.group(1))
+                            output_names.append('result')
+        return ir_fn, output_vars, output_names
 
 def _merge_ir_functions(functions, ssa_uid):
     """

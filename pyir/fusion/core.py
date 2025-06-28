@@ -2,6 +2,7 @@ import uuid
 import asyncio
 import collections
 import inspect
+import importlib
 
 from ..core.ir import IRFunction, IRInstr, IRModule, IRBlock, validate_ir, ssa
 from pyir.core.registry import _function_registry, register_function
@@ -9,6 +10,8 @@ from .ir_utils import _parse_ir_to_objects
 from pyir.core.jit import _compile_ir
 from pyir.typing import python_type_map
 from .._engine import pyir_debug
+fusion_async_mod = importlib.import_module('pyir.fusion.async')
+from .complex import is_complex_kernel
 
 _function_registry = None  # Will be set by main pyir/__init__.py
 
