@@ -3,45 +3,50 @@ import re
 from ..core.ir import IRFunction, IRBlock, IRInstr
 
 def _parse_ir_to_objects(ir_str, ssa_uid):
-    """Parse IR string to IR objects, handling both strings and IRFunction objects."""
+    """Parse IR string to IR objects, handling both strings and IRFunction objects. Applies SSA variable renaming with ssa_uid to avoid conflicts when fusing."""
     if hasattr(ir_str, 'blocks'):  # It's already an IRFunction object
         ir_fn = ir_str
-        # Extract output variables from the return instruction
-        output_vars = []
-        output_names = []
-        for block in ir_fn.blocks:
-            for instr in block.instrs:
-                if str(instr).startswith('ret '):
-                    ret_instr = str(instr)
-                    # Extract the return variable
-                    if 'ret void' not in ret_instr:
-                        # Find the variable being returned
-                        import re
-                        match = re.search(r'ret [^{}]+ %([a-zA-Z_][a-zA-Z0-9_]*)', ret_instr)
-                        if match:
-                            output_vars.append(match.group(1))
-                            output_names.append('result')
-        return ir_fn, output_vars, output_names
     else:
         # It's a string, parse it
         from ..core.ir import create_ir_function_from_string
         ir_fn = create_ir_function_from_string(ir_str)
-        # Extract output variables from the return instruction
-        output_vars = []
-        output_names = []
-        for block in ir_fn.blocks:
-            for instr in block.instrs:
-                if str(instr).startswith('ret '):
-                    ret_instr = str(instr)
-                    # Extract the return variable
-                    if 'ret void' not in ret_instr:
-                        # Find the variable being returned
-                        import re
-                        match = re.search(r'ret [^{}]+ %([a-zA-Z_][a-zA-Z0-9_]*)', ret_instr)
-                        if match:
-                            output_vars.append(match.group(1))
-                            output_names.append('result')
-        return ir_fn, output_vars, output_names
+
+    # Collect all argument names (do not rename these)
+    arg_names = set(n for n, _ in ir_fn.args)
+    # Build a mapping from old SSA names to new ones
+    ssa_map = {}
+    for block in ir_fn.blocks:
+        for instr in block.instrs:
+            s = str(instr)
+            # Match assignments: %var = ...
+            m = re.match(r'(%[a-zA-Z_][a-zA-Z0-9_]*)\s*=.*', s)
+            if m:
+                var = m.group(1)
+                if var[1:] not in arg_names:
+                    ssa_map[var] = f"%{var[1:]}_{ssa_uid}"
+    # Now, rewrite all instructions in all blocks
+    for block in ir_fn.blocks:
+        new_instrs = []
+        for instr in block.instrs:
+            s = str(instr)
+            # Replace all SSA variable names (LHS and RHS) except arguments
+            for old, new in ssa_map.items():
+                s = re.sub(rf'(?<![a-zA-Z0-9_]){re.escape(old)}(?![a-zA-Z0-9_])', new, s)
+            new_instrs.append(IRInstr(s))
+        block.instrs = new_instrs
+    # Extract output variables from the return instruction
+    output_vars = []
+    output_names = []
+    for block in ir_fn.blocks:
+        for instr in block.instrs:
+            if str(instr).startswith('ret '):
+                ret_instr = str(instr)
+                if 'ret void' not in ret_instr:
+                    match = re.search(r'ret [^{}]+ (%[a-zA-Z_][a-zA-Z0-9_]*(?:_[a-f0-9]+)?)', ret_instr)
+                    if match:
+                        output_vars.append(match.group(1))
+                        output_names.append('result')
+    return ir_fn, output_vars, output_names
 
 def _merge_ir_functions(functions, ssa_uid):
     """

@@ -1,4 +1,5 @@
 import ctypes
+from builtins import bool as builtin_bool
 
 named_types = {}
 
@@ -216,7 +217,7 @@ def define_type(name, llvm_type):
 python_type_map = {
     int: int32,
     float: float32,
-    bool: bool,
+    builtin_bool: bool_,
     complex: complex128,
     'int8': int8,
     'int16': int16,

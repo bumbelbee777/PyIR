@@ -431,3 +431,54 @@ def test_cache_utilities():
     stats = pyir.get_cache_stats()
     assert stats["cpu_cache_size"] >= initial_stats["cpu_cache_size"]
     assert "gpu_cache_size" in stats 
+
+def test_autofusion_simple():
+    @pyir.function
+    def add(a: pyir.float32, b: pyir.float32) -> pyir.float32:
+        result: float
+        pyir.inline("""
+            %result = fadd float %a, %b
+        """)
+        return result
+
+    @pyir.function
+    def mul(a: pyir.float32, b: pyir.float32) -> pyir.float32:
+        result: float
+        pyir.inline("""
+            %result = fmul float %a, %b
+        """)
+        return result
+
+    # Call both to trigger autofusion
+    add(1.0, 2.0)
+    mul(3.0, 4.0)
+
+    # Check that .fused exists and works
+    fused = mul._fused
+    assert fused is not None, "Fused kernel should be created"
+    out = fused(2.0, 3.0)
+    assert isinstance(out, tuple) and len(out) == 2
+    assert np.isclose(out[0], 5.0)  # add(2,3)
+    assert np.isclose(out[1], 6.0)  # mul(2,3)
+
+def test_autofusion_incompatible():
+    @pyir.function
+    def add(a: pyir.float32, b: pyir.float32) -> pyir.float32:
+        result: float
+        pyir.inline("""
+            %result = fadd float %a, %b
+        """)
+        return result
+
+    @pyir.function
+    def sub(a: pyir.float32, b: pyir.float32, c: pyir.float32) -> pyir.float32:
+        result: float
+        pyir.inline("""
+            %result = fsub float %a, %b
+        """)
+        return result
+
+    add(1.0, 2.0)
+    sub(3.0, 4.0, 5.0)
+    # Should not fuse due to incompatible signatures
+    assert not hasattr(sub, '_fused') or sub._fused is None 

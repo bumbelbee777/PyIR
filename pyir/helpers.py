@@ -1,5 +1,7 @@
 from .core import ssa
 import textwrap
+import inspect
+from .typing import python_type_map, bool_, builtin_bool
 
 def add(a, b, out=None, type='i32'):
     """Emit IR for integer addition."""
@@ -130,3 +132,60 @@ def call_fnptr(fnptr_var, args, out=None, ret_type='i32', arg_types=None):
         raise ValueError("[pyir.call_fnptr] arg_types must be provided.")
     arg_str = ', '.join(f'{t} {a}' for t, a in zip(arg_types, args))
     return f"{out} = call {ret_type} {fnptr_var}({arg_str})"
+
+_optimized_type_map = {
+    int: python_type_map[int],
+    float: python_type_map[float],
+    builtin_bool: python_type_map[builtin_bool],
+    complex: python_type_map[complex],
+    'int8': python_type_map['int8'],
+    'int16': python_type_map['int16'],
+    'int32': python_type_map['int32'],
+    'int64': python_type_map['int64'],
+    'float16': python_type_map['float16'],
+    'float32': python_type_map['float32'],
+    'float64': python_type_map['float64'],
+    'complex64': python_type_map['complex64'],
+    'complex128': python_type_map['complex128'],
+    'i8': python_type_map['int8'], 'i16': python_type_map['int16'], 'i32': python_type_map['int32'], 'i64': python_type_map['int64'],
+    'f16': python_type_map['float16'], 'f32': python_type_map['float32'], 'f64': python_type_map['float64'],
+    'c64': python_type_map['complex64'], 'c128': python_type_map['complex128'],
+}
+
+def fast_type_resolution(ann):
+    if ann is inspect._empty:
+        return python_type_map[int]
+    if hasattr(ann, 'llvm'):
+        return ann
+    if ann in _optimized_type_map:
+        return _optimized_type_map[ann]
+    if isinstance(ann, str):
+        if ann in _optimized_type_map:
+            return _optimized_type_map[ann]
+    if ann is tuple:
+        return tuple
+    if ann in python_type_map:
+        return python_type_map[ann]
+    if hasattr(ann, 'llvm') and hasattr(ann, 'ctype'):
+        return ann
+    return ann
+
+def fast_mangling(fn_name, arg_types, ret_type):
+    type_strings = []
+    for t in arg_types:
+        if hasattr(t, 'llvm'):
+            type_strings.append(t.llvm)
+        elif t is tuple:
+            type_strings.append('tuple')
+        else:
+            type_strings.append(str(t))
+    if ret_type is tuple:
+        tuple_size = 2
+        type_strings.append('tuple2')
+    elif hasattr(ret_type, 'llvm'):
+        type_strings.append(ret_type.llvm)
+    else:
+        type_strings.append(str(ret_type))
+    return f"{fn_name}__{'_'.join(type_strings)}"
+
+__all__ = ['fast_type_resolution', 'fast_mangling']

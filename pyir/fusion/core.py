@@ -3,6 +3,8 @@ import asyncio
 import collections
 import inspect
 import importlib
+import threading
+from .._engine import _local
 
 from ..core.ir import IRFunction, IRInstr, IRModule, IRBlock, validate_ir, ssa
 from pyir.core.registry import _function_registry, register_function
@@ -12,6 +14,8 @@ from pyir.typing import python_type_map
 from .._engine import pyir_debug
 fusion_async_mod = importlib.import_module('pyir.fusion.async')
 from .complex import is_complex_kernel
+from pyir.helpers import fast_type_resolution, fast_mangling
+import ctypes
 
 _function_registry = None  # Will be set by main pyir/__init__.py
 
@@ -26,19 +30,10 @@ def _mangle_function_name(fn):
     sig = inspect.signature(fn)
     arg_types = []
     for name, param in sig.parameters.items():
-        ann = param.annotation
-        if ann in python_type_map:
-            ann = python_type_map[ann]
-        arg_types.append(getattr(ann, 'llvm', str(ann)))
-    ret_ann = sig.return_annotation
-    if ret_ann in python_type_map:
-        ret_ann = python_type_map[ret_ann]
-    if ret_ann is inspect._empty:
-        ret_ann = 'void'
-    else:
-        ret_ann = getattr(ret_ann, 'llvm', str(ret_ann))
-    type_suffix = "_".join(arg_types + [ret_ann])
-    return f"{fn.__name__}__{type_suffix}"
+        ann = fast_type_resolution(param.annotation)
+        arg_types.append(ann)
+    ret_ann = fast_type_resolution(sig.return_annotation)
+    return fast_mangling(fn.__name__, arg_types, ret_ann)
 
 def fuse_kernels(fns, name="fused_kernel", register=True, debug=False, pretty_print=False, inline_deps=False, outputs=None, output_names=None, return_type='tuple'):
     """
@@ -106,18 +101,31 @@ def fuse_kernels(fns, name="fused_kernel", register=True, debug=False, pretty_pr
 
     # Use the first kernel's signature for the wrapper
     wrapper_args = base_args
-    wrapper_ret_type = ir_functions[0].ret_type if len(ir_functions) == 1 else f"{{{', '.join(fn.ret_type for fn in ir_functions)}}}"
+    # Handle void return types specially - can't create struct of void
+    if all(fn.ret_type == 'void' for fn in ir_functions):
+        wrapper_ret_type = 'void'
+    else:
+        wrapper_ret_type = ir_functions[0].ret_type if len(ir_functions) == 1 else f"{{{', '.join(fn.ret_type for fn in ir_functions)}}}"
 
     # Build the wrapper function body
     wrapper_block = IRBlock('entry')
     result_vars = []
     for i, fn in enumerate(ir_functions):
         call_args = [f"%{n}" for n, _ in wrapper_args]
-        call_result = ssa(f"call_{fn.name}")
-        wrapper_block.add(IRInstr(f"{call_result} = call {fn.ret_type} @{fn.name}({', '.join(f'{t} {a}' for a, (n, t) in zip(call_args, fn.args))})"))
-        result_vars.append(call_result)
-    # Return as struct (tuple)
-    if len(result_vars) == 1:
+        if fn.ret_type == 'void':
+            # For void functions, call without assignment
+            wrapper_block.add(IRInstr(f"call void @{fn.name}({', '.join(f'{t} {a}' for a, (n, t) in zip(call_args, fn.args))})"))
+            result_vars.append(None)  # No result for void functions
+        else:
+            # For non-void functions, assign result to variable
+            call_result = ssa(f"call_{fn.name}")
+            wrapper_block.add(IRInstr(f"{call_result} = call {fn.ret_type} @{fn.name}({', '.join(f'{t} {a}' for a, (n, t) in zip(call_args, fn.args))})"))
+            result_vars.append(call_result)
+    # Return as struct (tuple) or void
+    if wrapper_ret_type == 'void':
+        # For void functions, just call them and return void
+        wrapper_block.add(IRInstr("ret void"))
+    elif len(result_vars) == 1:
         wrapper_block.add(IRInstr(f"ret {ir_functions[0].ret_type} {result_vars[0]}"))
     else:
         # Create a struct to hold all results
@@ -138,8 +146,11 @@ def fuse_kernels(fns, name="fused_kernel", register=True, debug=False, pretty_pr
 
     # Build the IR module: all sub-kernels + wrapper
     ir_module = IRModule()
+    unique_functions = {}  # Track unique functions by name
     for fn in ir_functions:
-        ir_module.add_function(fn)
+        if fn.name not in unique_functions:
+            unique_functions[fn.name] = fn
+            ir_module.add_function(fn)
     ir_module.add_function(wrapper_fn)
     fused_ir = str(ir_module)
 
@@ -168,11 +179,46 @@ def fuse_kernels(fns, name="fused_kernel", register=True, debug=False, pretty_pr
         async def fused_fn(*args, out=None):
             # Await all sub-kernels if needed
             results = []
-            for fn in fns:
-                res = fn(*args)
-                if asyncio.iscoroutine(res) or hasattr(res, '__await__'):
-                    res = await res
-                results.append(res)
+            # Set flag to prevent autofusion recursion
+            _local.in_fused_kernel = True
+            if pyir_debug:
+                print(f"[pyir.fusion] Set in_fused_kernel=True for {name}")
+            try:
+                for fn in fns:
+                    # Call the compiled function directly to avoid recursion
+                    if hasattr(fn, '_metadata') and fn._metadata is not None:
+                        mangled_name = fn._metadata.mangled_name
+                        if mangled_name in _function_registry:
+                            # Get the compiled function
+                            from pyir.core.function import _compiled_functions
+                            if mangled_name in _compiled_functions:
+                                compiled_func = _compiled_functions[mangled_name]
+                                res = compiled_func(*args)
+                                if asyncio.iscoroutine(res) or hasattr(res, '__await__'):
+                                    res = await res
+                                results.append(res)
+                            else:
+                                # Fallback to calling the wrapper but with recursion protection
+                                res = fn(*args)
+                                if asyncio.iscoroutine(res) or hasattr(res, '__await__'):
+                                    res = await res
+                                results.append(res)
+                        else:
+                            # Fallback to calling the wrapper but with recursion protection
+                            res = fn(*args)
+                            if asyncio.iscoroutine(res) or hasattr(res, '__await__'):
+                                res = await res
+                            results.append(res)
+                    else:
+                        # Fallback to calling the wrapper but with recursion protection
+                        res = fn(*args)
+                        if asyncio.iscoroutine(res) or hasattr(res, '__await__'):
+                            res = await res
+                        results.append(res)
+            finally:
+                _local.in_fused_kernel = False
+                if pyir_debug:
+                    print(f"[pyir.fusion] Set in_fused_kernel=False for {name}")
             if outputs is not None:
                 results = [results[i] for i in outputs]
                 names = [output_names[i] for i in outputs] if output_names else [f"out{i}" for i in outputs]
@@ -189,7 +235,42 @@ def fuse_kernels(fns, name="fused_kernel", register=True, debug=False, pretty_pr
         fused_fn._is_async_kernel = True
     else:
         def fused_fn(*args, out=None):
-            results = [fn(*args) for fn in fns]
+            results = []
+            # Set flag to prevent autofusion recursion
+            _local.in_fused_kernel = True
+            if pyir_debug:
+                print(f"[pyir.fusion] Set in_fused_kernel=True for {name}")
+            try:
+                for fn in fns:
+                    # Call the compiled function directly to avoid recursion
+                    if hasattr(fn, '_metadata') and fn._metadata is not None:
+                        mangled_name = fn._metadata.mangled_name
+                        if mangled_name in _function_registry:
+                            # Get the compiled function
+                            from pyir.core.function import _compiled_functions
+                            if mangled_name in _compiled_functions:
+                                compiled_func = _compiled_functions[mangled_name]
+                                # Handle tuple functions specially
+                                if fn._metadata.ret_type is tuple:
+                                    from pyir.core.function import Tuple2f
+                                    out_struct = Tuple2f()
+                                    compiled_func(*(list(args) + [ctypes.byref(out_struct)]))
+                                    results.append((out_struct.x, out_struct.y))
+                                else:
+                                    results.append(compiled_func(*args))
+                            else:
+                                # Fallback to calling the wrapper but with recursion protection
+                                results.append(fn(*args))
+                        else:
+                            # Fallback to calling the wrapper but with recursion protection
+                            results.append(fn(*args))
+                    else:
+                        # Fallback to calling the wrapper but with recursion protection
+                        results.append(fn(*args))
+            finally:
+                _local.in_fused_kernel = False
+                if pyir_debug:
+                    print(f"[pyir.fusion] Set in_fused_kernel=False for {name}")
             if outputs is not None:
                 results = [results[i] for i in outputs]
                 names = [output_names[i] for i in outputs] if output_names else [f"out{i}" for i in outputs]

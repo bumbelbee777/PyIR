@@ -1,4 +1,5 @@
 import llvmlite.binding as llvm
+import threading
 
 # Enable debug prints for unit tests
 pyir_debug = True
@@ -13,6 +14,9 @@ _target = llvm.Target.from_default_triple()
 _target_machine = _target.create_target_machine()
 _backing_mod = llvm.parse_assembly("")  # empty module placeholder
 _engine = llvm.create_mcjit_compiler(_backing_mod, _target_machine)
+
+# Thread-local storage for autofusion state
+_local = threading.local()
 
 def add_module(mod):
     return _engine.add_module(mod)

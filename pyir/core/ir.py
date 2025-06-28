@@ -288,7 +288,13 @@ class IRModule:
         if not self._dirty and self._str_cache is not None:
             return self._str_cache
         
-        result = "\n".join(self.globals + [str(f) for f in self.functions])
+        # Emit struct type declarations at the top if present (deduplicated)
+        struct_decls = set()
+        for fn in self.functions:
+            if hasattr(fn, '_struct_type_decl'):
+                struct_decls.add(fn._struct_type_decl)
+        
+        result = "\n".join(sorted(struct_decls) + self.globals + [str(f) for f in self.functions])
         self._str_cache = result
         self._dirty = False
         return result
