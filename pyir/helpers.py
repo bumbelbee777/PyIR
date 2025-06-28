@@ -59,7 +59,6 @@ def if_then(cond_var, true_block, false_block=None, label_base='if'):
     ir.append(f"{end_label}:")
     return '\n'.join(ir)
 
-# --- High-level loop helper ---
 def for_loop(var, start, end, body, type='i32', label_base='for'):
     """
     Emit IR for a simple counted for loop.
@@ -87,7 +86,6 @@ def for_loop(var, start, end, body, type='i32', label_base='for'):
     ]
     return '\n'.join(ir)
 
-# --- Pointer arithmetic and dereferencing helpers ---
 def gep(ptr_var, indices, out=None, type='i32*'):
     """Emit IR for getelementptr (GEP) instruction.
     ptr_var: base pointer pyir.ssa name

@@ -1,9 +1,9 @@
 import inspect as _inspect
-from .core import named_types
+from ..core import named_types
+from ..core.consts import _global_consts
 
 # These should be set by the main module
 _function_registry = None
-_global_consts = None
 _get_module_ir = None
 
 def _setup_inspect(function_registry, global_consts, get_module_ir):

@@ -1,5 +1,8 @@
 import llvmlite.binding as llvm
 
+# Enable debug prints for unit tests
+pyir_debug = True
+
 # Initialize LLVM (once)
 llvm.initialize()
 llvm.initialize_native_target()

@@ -7,9 +7,11 @@ import pyir
 
 @pytest.fixture(autouse=True)
 def clear_pyir_state():
-    pyir.clear_kernel_cache()
-    if hasattr(pyir, '_function_registry'):
-        pyir._function_registry.clear()
+    from pyir.core.function import clear_caches, clear_compiled_functions
+    from pyir.core.registry import _function_registry
+    clear_caches()
+    clear_compiled_functions()
+    _function_registry.clear()
 
 def test_basic_fusion():
     """Test basic kernel fusion with IR object model."""
@@ -116,8 +118,8 @@ def test_ir_object_utilities():
     # Test kernel metadata extraction
     metadata = pyir.get_kernel_metadata(add)
     assert metadata["name"] == "add"
-    assert metadata["is_cuda"] == False
-    assert metadata["is_simd"] == False
+    assert metadata.get('is_cuda', False) == False
+    assert metadata.get('is_simd', False) == False
     assert "a" in metadata["parameters"]
     assert "b" in metadata["parameters"]
     

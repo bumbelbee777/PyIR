@@ -6,6 +6,19 @@ import pyir
 import numba
 from matplotlib.animation import FuncAnimation
 
+# PyIR elementwise add with no optimizations
+@pyir.function(no_optims=True)
+def add_pyir_no_optims(a: pyir.float32, b: pyir.float32) -> pyir.float32:
+    result: float
+    pyir.inline("""
+        %result = fadd float %a, %b
+    """)
+    return result
+
+# Ensure IR is generated and registered
+add_pyir_no_optims(1.0, 2.0)
+add_pyir_np_no_optims = pyir.numpy_kernel(add_pyir_no_optims, no_optims=True)
+
 # PyIR elementwise add
 @pyir.function
 def add_pyir(a: pyir.float32, b: pyir.float32) -> pyir.float32:
@@ -14,6 +27,9 @@ def add_pyir(a: pyir.float32, b: pyir.float32) -> pyir.float32:
         %result = fadd float %a, %b
     """)
     return result
+
+# Ensure IR is generated and registered
+add_pyir(1.0, 2.0)
 add_pyir_np = pyir.numpy_kernel(add_pyir)
 
 # PyIR elementwise multiply
@@ -24,6 +40,9 @@ def mul_pyir(a: pyir.float32, b: pyir.float32) -> pyir.float32:
         %result = fmul float %a, %b
     """)
     return result
+
+# Ensure IR is generated and registered
+mul_pyir(1.0, 2.0)
 mul_pyir_np = pyir.numpy_kernel(mul_pyir)
 
 # PyIR fused multiply-add
@@ -36,6 +55,9 @@ def fma_pyir(a: pyir.float32, b: pyir.float32, c: pyir.float32) -> pyir.float32:
         %result = fadd float %tmp, %c
     """)
     return result
+
+# Ensure IR is generated and registered
+fma_pyir(1.0, 2.0, 3.0)
 fma_pyir_np = pyir.numpy_kernel(fma_pyir)
 
 # PyIR sum reduction
@@ -46,6 +68,9 @@ def sum_pyir(a: pyir.float32, b: pyir.float32) -> pyir.float32:
         %result = fadd float %a, %b
     """)
     return result
+
+# Ensure IR is generated and registered
+sum_pyir(1.0, 2.0)
 sum_pyir_np = lambda arr: np.sum(arr)  # Use numpy for reduction for now
 
 # PyIR vectorized elementwise add (native loop kernel)
@@ -83,7 +108,6 @@ def sum_numba(arr):
         s += arr[i]
     return s
 
-# --- Benchmarking ---
 
 def bench_kernel(fn, *args, repeat=5, number=3):
     times = []
@@ -145,7 +169,6 @@ for size in sizes:
     })
     print(f"[size={size}] add_pyir={t_add_pyir:.6f}s, add_pyir_vec={t_add_pyir_vec:.6f}s, add_numba={t_add_numba:.6f}s, mul_pyir={t_mul_pyir:.6f}s, mul_pyir_vec={t_mul_pyir_vec:.6f}s, mul_numba={t_mul_numba:.6f}s, fma_pyir={t_fma_pyir:.6f}s, fma_pyir_vec={t_fma_pyir_vec:.6f}s, fma_numba={t_fma_numba:.6f}s, fused_vec={t_fused_vec:.6f}s, sum_pyir={t_sum_pyir:.6f}s, sum_numba={t_sum_numba:.6f}s")
 
-# --- Visualization ---
 df = pd.DataFrame(results)
 plt.figure(figsize=(10, 6))
 plt.title("PyIR vs Numba: Elementwise Add")
@@ -214,7 +237,6 @@ plt.grid(True, which='both', ls='--')
 plt.tight_layout()
 plt.savefig('benchmarks/pyir_fused_vec.png')
 
-# --- Animated GIF for Add Kernel ---
 fig, ax = plt.subplots(figsize=(8, 5))
 ax.set_title("PyIR vs Numba: Add Kernel Scaling")
 ax.set_xlabel('Array Size')

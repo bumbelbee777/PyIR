@@ -4,7 +4,7 @@ pyir.cuda: CUDA/GPU experimental helpers for PyIR
 
 import functools
 import warnings
-from .core import safe_mode
+from ..security.safe_mode import safe_mode
 
 try:
     import numpy as np
@@ -13,7 +13,6 @@ try:
 except ImportError:
     _has_numba = False
 
-# --- Device memory management (host API) ---
 def cuda_malloc(shape, dtype=np.float32):
     """Allocate device memory (returns device array). Runtime checks in safe mode."""
     if not _has_numba:

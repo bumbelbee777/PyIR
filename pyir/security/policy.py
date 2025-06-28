@@ -51,3 +51,11 @@ def validate_policy(policy: Any) -> PolicyType:
     if callable(policy):
         return policy
     raise TypeError(f"Invalid execution policy: {policy}")
+
+"""
+pyir.security.policy: Security policies and safe mode for PyIR
+"""
+
+# Global safe mode flag for PyIR
+
+__all__ = ["ExecutionPolicy", "SandboxedPolicy"]

@@ -124,6 +124,37 @@ class VectorType:
         return f"pyir.vec({self.elem_type}, {self.count})"
 def vec(elem_type, count): return VectorType(elem_type, count)
 
+# Vector type classes
+class vec4f(VectorType):
+    def __init__(self): super().__init__(float32, 4)
+    def __repr__(self): return "pyir.vec4f"
+class vec8f(VectorType):
+    def __init__(self): super().__init__(float32, 8)
+    def __repr__(self): return "pyir.vec8f"
+class vec4d(VectorType):
+    def __init__(self): super().__init__(float64, 4)
+    def __repr__(self): return "pyir.vec4d"
+class vec4i(VectorType):
+    def __init__(self): super().__init__(int32, 4)
+    def __repr__(self): return "pyir.vec4i"
+class vec8i(VectorType):
+    def __init__(self): super().__init__(int32, 8)
+    def __repr__(self): return "pyir.vec8i"
+
+# Backward-compatible instances
+vec4f_ = vec4f()
+vec8f_ = vec8f()
+vec4d_ = vec4d()
+vec4i_ = vec4i()
+vec8i_ = vec8i()
+
+# Additional common instances
+vec4f = vec4f()
+vec8f = vec8f()
+vec4d = vec4d()
+vec4i = vec4i()
+vec8i = vec8i()
+
 class StructType:
     def __init__(self, field_types):
         self.field_types = field_types
@@ -180,3 +211,20 @@ def opaque(name): return OpaqueType(name)
 def define_type(name, llvm_type):
     named_types[name] = llvm_type
     return llvm_type
+
+# Add python_type_map for type mangling and registration
+python_type_map = {
+    int: int32,
+    float: float32,
+    bool: bool,
+    complex: complex128,
+    'int8': int8,
+    'int16': int16,
+    'int32': int32,
+    'int64': int64,
+    'float16': float16,
+    'float32': float32,
+    'float64': float64,
+    'complex64': complex64,
+    'complex128': complex128,
+}

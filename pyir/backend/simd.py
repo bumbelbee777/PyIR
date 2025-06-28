@@ -3,8 +3,8 @@ pyir.simd: SIMD-friendly IR helpers and explicit SIMD kernel support for PyIR
 """
 import functools
 import re
-from .core import ssa, IRInstr, IRBlock, IRFunction, IRModule
-from .typing import vec, float32, float64, int32, int64
+from ..core import ssa, IRInstr, IRBlock, IRFunction, IRModule
+from ..typing import vec, float32, float64, int32, int64
 
 
 def vadd(a, b, out=None, type='"<4 x float>"'):
@@ -101,15 +101,13 @@ def simd_kernel(width=4, dtype=float32):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
             return fn(*args, **kwargs)
+        # Propagate SIMD attributes to the wrapper
+        wrapper._is_simd_kernel = True
+        wrapper._simd_width = simd_width
+        wrapper._simd_dtype = simd_dtype
+        wrapper.is_simd = True
         return wrapper
     return decorator
-
-# Example vector type aliases
-vec4f = vec(float32, 4)
-vec8f = vec(float32, 8)
-vec4d = vec(float64, 4)
-vec4i = vec(int32, 4)
-vec8i = vec(int32, 8)
 
 def autovectorize_kernel(fn, width=4, dtype=float32):
     """
@@ -123,7 +121,7 @@ def autovectorize_numpy_kernel(fn, width=4, dtype=float32):
     Given a scalar NumPy kernel, generate a SIMD version using @simd_kernel and wrap as a NumPy kernel.
     Returns the SIMD NumPy kernel.
     """
-    from .numpy import numpy_kernel
+    from ..interop.numpy import numpy_kernel
     simd_fn = simd_kernel(width=width, dtype=dtype)(fn)
     return numpy_kernel(simd_fn)
 

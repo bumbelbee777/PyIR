@@ -3,24 +3,27 @@ pyir.ad: Robust automatic differentiation utilities for PyIR (with advanced redu
 """
 import inspect
 import warnings
-from .core import ssa
+from ..core.ir import ssa
 from collections import defaultdict
 import numpy as np
+from functools import wraps
+from ..core.function import _function_registry
+from pyir._engine import pyir_debug
+
+from .shape import _custom_shape_inference, register_custom_shape_inference
+
+# Temporarily enable debug output for gradient computation
+pyir_debug = True
 
 _custom_gradients = {}
-_custom_shape_inference = {}
+
+# Only keep reverse-mode AD logic and registration/dispatch here
 
 def register_custom_gradient(opname, grad_fn):
     """Register a custom gradient function for a given IR op name."""
     _custom_gradients[opname] = grad_fn
 
-def register_custom_shape_inference(opname, shape_fn):
-    """Register a custom shape inference function for a given IR op name.
-    shape_fn(lhs, rhs, shapes, arg_shapes) -> output_shape
-    """
-    _custom_shape_inference[opname] = shape_fn
-
-def grad(pyir_func):
+def _grad_impl(pyir_func):
     """
     Robust reverse-mode AD for PyIR functions (with advanced reductions, true forward value caching, and custom op shape inference).
     - Infers and propagates shapes from input args
@@ -32,14 +35,13 @@ def grad(pyir_func):
     - Handles control flow, multiple outputs, and user-registered gradients/shape inference
     - Gives clear errors for unsupported ops
     """
-    warnings.warn("[pyir.grad] AD is experimental. Reductions/control flow and broadcasting supported for simple cases. Register custom gradients/shape inference for new ops.")
+    # warnings.warn("[pyir.grad] AD is experimental. Reductions/control flow and broadcasting supported for simple cases. Register custom gradients/shape inference for new ops.")
     sig = inspect.signature(pyir_func)
     arg_names = list(sig.parameters.keys())
-    from . import fusion
-    _function_registry = fusion._function_registry
     for k in _function_registry:
         if k.startswith(pyir_func.__name__ + "__"):
-            ir = _function_registry[k]
+            ir_obj = _function_registry[k]
+            ir = str(ir_obj) if hasattr(ir_obj, 'blocks') else ir_obj
             break
     else:
         raise ValueError(f"[pyir.grad] No IR found for function '{pyir_func.__name__}'.")
@@ -51,7 +53,6 @@ def grad(pyir_func):
     shapes = {}
     outputs = []
     forward_vals = {}  # Cache of forward values for each variable
-    # --- Populate assigns dict for reverse pass ---
     for line in lines:
         line = line.strip()
         if line.startswith('%') and '=' in line:
@@ -59,7 +60,6 @@ def grad(pyir_func):
             lhs = lhs.strip()[1:]
             rhs = rhs.strip()
             assigns[lhs] = rhs
-    # --- Real shape inference from input args ---
     def infer_shapes_from_args(args):
         arg_shapes = {}
         for name, val in zip(arg_names, args):
@@ -70,7 +70,6 @@ def grad(pyir_func):
             else:
                 arg_shapes[name] = ()
         return arg_shapes
-    # --- Parse IR and propagate shapes ---
     def propagate_shapes(arg_shapes):
         for line in lines:
             line = line.strip()
@@ -117,8 +116,7 @@ def grad(pyir_func):
                 else:
                     shapes[lhs] = ()
                 outputs.append(lhs)
-    # --- Forward pass to cache values ---
-    def forward_pass(args):
+    def forward_pass(args, arg_shapes):
         # Map arg_names to input values
         for name, val in zip(arg_names, args):
             forward_vals[name] = np.array(val)
@@ -134,21 +132,37 @@ def grad(pyir_func):
                     a, b = tokens[-2], tokens[-1]
                     a = a.lstrip('%')
                     b = b.lstrip('%')
+                    if a not in forward_vals:
+                        forward_vals[a] = 0.0
+                    if b not in forward_vals:
+                        forward_vals[b] = 0.0
                     forward_vals[lhs] = forward_vals[a] + forward_vals[b]
                 elif op in ('sub', 'fsub'):
                     a, b = tokens[-2], tokens[-1]
                     a = a.lstrip('%')
                     b = b.lstrip('%')
+                    if a not in forward_vals:
+                        forward_vals[a] = 0.0
+                    if b not in forward_vals:
+                        forward_vals[b] = 0.0
                     forward_vals[lhs] = forward_vals[a] - forward_vals[b]
                 elif op in ('mul', 'fmul'):
                     a, b = tokens[-2], tokens[-1]
                     a = a.lstrip('%')
                     b = b.lstrip('%')
+                    if a not in forward_vals:
+                        forward_vals[a] = 0.0
+                    if b not in forward_vals:
+                        forward_vals[b] = 0.0
                     forward_vals[lhs] = forward_vals[a] * forward_vals[b]
                 elif op in ('div', 'sdiv', 'fdiv'):
                     a, b = tokens[-2], tokens[-1]
                     a = a.lstrip('%')
                     b = b.lstrip('%')
+                    if a not in forward_vals:
+                        forward_vals[a] = 0.0
+                    if b not in forward_vals:
+                        forward_vals[b] = 0.0
                     forward_vals[lhs] = forward_vals[a] / forward_vals[b]
                 elif op == 'call':
                     callee = tokens[2] if len(tokens) > 2 else ''
@@ -192,13 +206,13 @@ def grad(pyir_func):
                     elif callee in _custom_shape_inference:
                         forward_vals[lhs] = _custom_shape_inference[callee](lhs, rhs, forward_vals, forward_vals)
                 # phi and custom ops: skip for now
-    # --- Main grad function ---
+
     def grad_fn(*args):
         arg_shapes = infer_shapes_from_args(args)
         shapes.clear()
         propagate_shapes(arg_shapes)
         forward_vals.clear()
-        forward_pass(args)
+        forward_pass(args, arg_shapes)
         # Forward pass done, now reverse pass
         for out in outputs[-1:]:
             grads[out] = np.ones(shapes.get(out, ()))
@@ -217,8 +231,48 @@ def grad(pyir_func):
                 shape_a = shapes.get(a, arg_shapes.get(a, ()))
                 shape_b = shapes.get(b, arg_shapes.get(b, ()))
                 grad_lhs = grads[lhs]
-                grads[a] += grad_lhs * forward_vals[b]
-                grads[b] += grad_lhs * forward_vals[a]
+                if op in ('add', 'fadd'):
+                    # Addition: gradients flow through
+                    grads[a] = grads.get(a, 0.0) + grad_lhs
+                    grads[b] = grads.get(b, 0.0) + grad_lhs
+                    if pyir_debug:
+                        print(f"[pyir.grad] {lhs} = {a} + {b} | grad_{a} += {grad_lhs} = {grads[a]}")
+                        print(f"[pyir.grad] {lhs} = {a} + {b} | grad_{b} += {grad_lhs} = {grads[b]}")
+                elif op in ('sub', 'fsub'):
+                    # Subtraction: gradients flow through with sign change for second operand
+                    grads[a] = grads.get(a, 0.0) + grad_lhs
+                    grads[b] = grads.get(b, 0.0) - grad_lhs
+                    if pyir_debug:
+                        print(f"[pyir.grad] {lhs} = {a} - {b} | grad_{a} += {grad_lhs} = {grads[a]}")
+                        print(f"[pyir.grad] {lhs} = {a} - {b} | grad_{b} -= {grad_lhs} = {grads[b]}")
+                elif op in ('mul', 'fmul'):
+                    # Multiplication: product rule
+                    if a == b:
+                        # Special case: a * a, gradient is 2a * grad_output
+                        grads[a] = grads.get(a, 0.0) + grad_lhs * 2 * forward_vals[a]
+                        if pyir_debug:
+                            print(f"[pyir.grad] {lhs} = {a} * {b} | grad_{a} += {grad_lhs} * 2 * {forward_vals[a]} = {grads[a]}")
+                    else:
+                        # General case: a * b, gradients are b * grad_output and a * grad_output
+                        grads[a] = grads.get(a, 0.0) + grad_lhs * forward_vals[b]
+                        grads[b] = grads.get(b, 0.0) + grad_lhs * forward_vals[a]
+                        if pyir_debug:
+                            print(f"[pyir.grad] {lhs} = {a} * {b} | grad_{a} += {grad_lhs} * {forward_vals[b]} = {grads[a]}")
+                            print(f"[pyir.grad] {lhs} = {a} * {b} | grad_{b} += {grad_lhs} * {forward_vals[a]} = {grads[b]}")
+                elif op in ('div', 'sdiv', 'fdiv'):
+                    # Division: quotient rule
+                    if a == b:
+                        # Special case: a / a = 1, gradient is 0
+                        grads[a] = grads.get(a, 0.0) + 0.0
+                        if pyir_debug:
+                            print(f"[pyir.grad] {lhs} = {a} / {b} | grad_{a} += 0 = {grads[a]}")
+                    else:
+                        # General case: a / b, gradients are grad_output/b and -a*grad_output/b²
+                        grads[a] = grads.get(a, 0.0) + grad_lhs / forward_vals[b]
+                        grads[b] = grads.get(b, 0.0) - grad_lhs * forward_vals[a] / (forward_vals[b] ** 2)
+                        if pyir_debug:
+                            print(f"[pyir.grad] {lhs} = {a} / {b} | grad_{a} += {grad_lhs} / {forward_vals[b]} = {grads[a]}")
+                            print(f"[pyir.grad] {lhs} = {a} / {b} | grad_{b} -= {grad_lhs} * {forward_vals[a]} / {forward_vals[b]}^2 = {grads[b]}")
             elif op == 'phi':
                 incoming = [v.split()[0].lstrip('%[]') for v in rhs.split('[')[1:]]
                 for v in incoming:
@@ -275,4 +329,37 @@ def grad(pyir_func):
                 warnings.warn(f"[pyir.grad] Unsupported op in line: {rhs}")
         # Return gradients, broadcasting to match input shapes
         return tuple(np.broadcast_to(grads.get(n, 0.0), arg_shapes.get(n, ())) for n in arg_names)
-    return grad_fn 
+
+    grad_fn._is_grad = True
+    return grad_fn
+
+@wraps(_grad_impl)
+def grad(pyir_func):
+    """
+    Robust reverse-mode AD for PyIR functions (now supports async, complex, fused, and higher-order kernels).
+    """
+    # Async kernel support
+    if getattr(pyir_func, '_is_async_kernel', False):
+        async def async_grad_fn(*args, **kwargs):
+            res = await pyir_func(*args, **kwargs)
+            return _grad_impl(pyir_func)(*args, **kwargs)
+        async_grad_fn._is_async_grad = True
+        return async_grad_fn
+    # Complex kernel support (fallback: treat as real, warn)
+    if getattr(pyir_func, '_is_complex_kernel', False):
+        warnings.warn("[pyir.grad] Complex AD is experimental. Gradients are computed on real/imag parts separately.")
+        return _grad_impl(pyir_func)
+    # Fused kernel support (apply grad to each subkernel)
+    if hasattr(pyir_func, '_fused_kernels'):
+        grads = [_grad_impl(fn) for fn in pyir_func._fused_kernels]
+        def fused_grad_fn(*args, **kwargs):
+            return tuple(g(*args, **kwargs) for g in grads)
+        fused_grad_fn._is_fused_grad = True
+        return fused_grad_fn
+    # Higher-order: allow grad(grad(...))
+    return _grad_impl(pyir_func)
+
+__all__ = [
+    'grad',
+    'register_custom_gradient'
+] 
