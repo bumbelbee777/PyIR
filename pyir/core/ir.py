@@ -228,7 +228,9 @@ class IRBlock:
 
 class IRFunction:
     def __init__(self, name, args, ret_type, attrs="", fast_math=False):
-        self.name = name
+        import re
+        # --- PATCH: sanitize function name for LLVM compatibility ---
+        self.name = re.sub(r'[^a-zA-Z0-9_]', '_', name)
         self.args = args
         self.ret_type = ret_type
         self.attrs = attrs

@@ -2,6 +2,7 @@ from .core import ssa
 import textwrap
 import inspect
 from .typing import python_type_map, bool_, builtin_bool
+import re
 
 def add(a, b, out=None, type='i32'):
     """Emit IR for integer addition."""
@@ -174,18 +175,23 @@ def fast_mangling(fn_name, arg_types, ret_type):
     type_strings = []
     for t in arg_types:
         if hasattr(t, 'llvm'):
-            type_strings.append(t.llvm)
+            s = t.llvm
         elif t is tuple:
-            type_strings.append('tuple')
+            s = 'tuple'
         else:
-            type_strings.append(str(t))
+            s = str(t)
+        # Sanitize: replace non-alphanumeric/underscore with _
+        s = re.sub(r'[^a-zA-Z0-9_]', '_', s)
+        type_strings.append(s)
     if ret_type is tuple:
         tuple_size = 2
-        type_strings.append('tuple2')
+        s = 'tuple2'
     elif hasattr(ret_type, 'llvm'):
-        type_strings.append(ret_type.llvm)
+        s = ret_type.llvm
     else:
-        type_strings.append(str(ret_type))
+        s = str(ret_type)
+    s = re.sub(r'[^a-zA-Z0-9_]', '_', s)
+    type_strings.append(s)
     return f"{fn_name}__{'_'.join(type_strings)}"
 
 __all__ = ['fast_type_resolution', 'fast_mangling']

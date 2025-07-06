@@ -9,7 +9,31 @@ _module_cache_lock = threading.Lock()
 def jit_compile_ir(ir_code: str, fn_name: str = None):
     """
     Compile and add LLVM IR code to the JIT engine. No sandboxing or security logic.
+    Automatically adds needed LLVM intrinsic declarations if used but not declared.
     """
+    needed_intrinsics = [
+        {'pattern': '@llvm.ctpop.i64', 'declare': 'declare i64 @llvm.ctpop.i64(i64)'},
+        {'pattern': '@llvm.sqrt.f32', 'declare': 'declare float @llvm.sqrt.f32(float)'},
+        {'pattern': '@llvm.sqrt.f64', 'declare': 'declare double @llvm.sqrt.f64(double)'},
+        {'pattern': '@llvm.sin.f32', 'declare': 'declare float @llvm.sin.f32(float)'},
+        {'pattern': '@llvm.sin.f64', 'declare': 'declare double @llvm.sin.f64(double)'},
+        {'pattern': '@llvm.cos.f32', 'declare': 'declare float @llvm.cos.f32(float)'},
+        {'pattern': '@llvm.cos.f64', 'declare': 'declare double @llvm.cos.f64(double)'},
+        {'pattern': '@llvm.exp.f32', 'declare': 'declare float @llvm.exp.f32(float)'},
+        {'pattern': '@llvm.exp.f64', 'declare': 'declare double @llvm.exp.f64(double)'},
+        {'pattern': '@llvm.log.f32', 'declare': 'declare float @llvm.log.f32(float)'},
+        {'pattern': '@llvm.log.f64', 'declare': 'declare double @llvm.log.f64(double)'},
+        {'pattern': '@llvm.pow.f32', 'declare': 'declare float @llvm.pow.f32(float, float)'},
+        {'pattern': '@llvm.pow.f64', 'declare': 'declare double @llvm.pow.f64(double, double)'},
+        {'pattern': '@llvm.fabs.f32', 'declare': 'declare float @llvm.fabs.f32(float)'},
+        {'pattern': '@llvm.fabs.f64', 'declare': 'declare double @llvm.fabs.f64(double)'},
+        {'pattern': '@llvm.fma.f32', 'declare': 'declare float @llvm.fma.f32(float, float, float)'},
+        {'pattern': '@llvm.fma.f64', 'declare': 'declare double @llvm.fma.f64(double, double, double)'},
+        # Add more as needed
+    ]
+    for info in needed_intrinsics:
+        if info['pattern'] in ir_code and info['declare'] not in ir_code:
+            ir_code = info['declare'] + '\n' + ir_code
     ir_hash = hashlib.sha256(ir_code.encode()).hexdigest()
     
     with _module_cache_lock:

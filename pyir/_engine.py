@@ -1,7 +1,6 @@
 import llvmlite.binding as llvm
 import threading
 
-# Enable debug prints for unit tests
 pyir_debug = True
 
 # Initialize LLVM (once)

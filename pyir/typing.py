@@ -75,9 +75,13 @@ class ComplexType:
         if bits == 64:
             self.llvm = '{float, float}'
             self.ctype = ctypes.c_float * 2
+            from .typing import float32
+            self.field_types = [float32, float32]
         elif bits == 128:
             self.llvm = '{double, double}'
             self.ctype = ctypes.c_double * 2
+            from .typing import float64
+            self.field_types = [float64, float64]
         else:
             raise ValueError(f"Unsupported complex type bits: {bits}")
     def __repr__(self):
@@ -179,16 +183,25 @@ class VoidType:
     llvm = 'void'
     ctype = None
     def __repr__(self): return "pyir.void"
-void = VoidType()
+
+class void(VoidType):
+    pass
 
 class PointerType:
     def __init__(self, base_type):
         self.base_type = base_type
-        self.llvm = f"{base_type.llvm}*"
-        self.ctype = ctypes.POINTER(base_type.ctype) if hasattr(base_type, 'ctype') and base_type.ctype else None
+        if base_type is void:
+            self.llvm = "i8*"
+            self.ctype = ctypes.c_void_p
+        else:
+            self.llvm = f"{base_type.llvm}*"
+            self.ctype = ctypes.POINTER(base_type.ctype) if hasattr(base_type, 'ctype') and base_type.ctype else None
     def __repr__(self):
         return f"pyir.ptr({self.base_type})"
-def ptr(base_type): return PointerType(base_type)
+
+class ptr:
+    def __class_getitem__(cls, base_type):
+        return PointerType(base_type)
 
 class FunctionPointerType:
     def __init__(self, arg_types, ret_type):
@@ -198,7 +211,10 @@ class FunctionPointerType:
         self.ctype = ctypes.CFUNCTYPE(ret_type.ctype, *(t.ctype for t in arg_types)) if ret_type.ctype else None
     def __repr__(self):
         return f"pyir.fnptr([{', '.join(map(str, self.arg_types))}], {self.ret_type})"
-def fnptr(arg_types, ret_type): return FunctionPointerType(arg_types, ret_type)
+    
+class fnptr:
+    def __class_getitem__(cls, base_type):
+        return FunctionPointerType(base_type)
 
 class OpaqueType:
     def __init__(self, name):
@@ -207,7 +223,10 @@ class OpaqueType:
         self.ctype = None
     def __repr__(self):
         return f"pyir.opaque('{self.name}')"
-def opaque(name): return OpaqueType(name)
+
+class opaque:
+    def __class_getitem__(cls, base_type):
+        return OpaqueType(base_type)
 
 def define_type(name, llvm_type):
     named_types[name] = llvm_type

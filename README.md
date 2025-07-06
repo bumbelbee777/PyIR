@@ -1,8 +1,6 @@
 # PyIR: Inline LLVM IR Directly From Python 🚀
 
-[![PyPI version](https://badge.fury.io/py/pyir.svg)](https://badge.fury.io/py/pyir)
-
-**Production-grade, ergonomic LLVM IR and numerical kernel system for Python**
+**Powerful, advanced, ergonomic LLVM IR and numerical kernel system for Python**
 
 ---
 
